@@ -1,10 +1,11 @@
 "use client"
 
-import React from 'react';
+import React, { useState } from 'react';
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { ShieldCheck, SearchCode, Layers, BrainCircuit, ChevronRight, Shield, Lock } from 'lucide-react';
+import { ShieldCheck, SearchCode, Layers, BrainCircuit, ChevronRight, Shield, Lock, AlertCircle, Check, AlertTriangle } from 'lucide-react';
+import { TrustAnalysis } from '@/lib/openrouter';
 
 const features = [
   {
@@ -63,7 +64,132 @@ const ShinySearchIcon = () => (
   </div>
 );
 
+// Trust Score Component
+const TrustScoreGauge = ({ score, classification }: { score: number, classification: string }) => {
+  // Color mapping based on score
+  const getColor = () => {
+    if (score <= 20) return '#FF4136'; // Red - High Risk
+    if (score <= 40) return '#FF851B'; // Orange - Suspicious
+    if (score <= 60) return '#FFDC00'; // Yellow - Neutral/New
+    if (score <= 80) return '#2ECC40'; // Light Green - Trusted
+    return '#01FF70'; // Green - Highly Trusted
+  };
+
+  const color = getColor();
+  const rotation = (score / 100) * 180;
+  
+  return (
+    <div className="flex flex-col items-center gap-4">
+      <div className="relative w-48 h-24 overflow-hidden">
+        {/* Semi-circle background */}
+        <div className="absolute w-48 h-48 rounded-full bg-black/30 top-0"></div>
+        
+        {/* Colored portion based on score */}
+        <div 
+          className="absolute w-48 h-48 rounded-full top-0 bg-gradient-to-r"
+          style={{ 
+            background: `conic-gradient(${color} 0deg, ${color} ${score * 1.8}deg, transparent ${score * 1.8}deg, transparent 360deg)` 
+          }}
+        ></div>
+        
+        {/* Gauge mask - only show top half */}
+        <div className="absolute w-48 h-24 bg-[#1a1a2e] bottom-0"></div>
+        
+        {/* Needle */}
+        <div 
+          className="absolute w-1 h-24 bg-white top-0 left-1/2 transform -translate-x-1/2 origin-bottom z-10"
+          style={{ transform: `translateX(-50%) rotate(${rotation - 90}deg)` }}
+        >
+          <div className="w-3 h-3 rounded-full bg-white absolute -top-1 -left-1"></div>
+        </div>
+        
+        {/* Center point */}
+        <div className="absolute w-4 h-4 rounded-full bg-white bottom-0 left-1/2 transform -translate-x-1/2 z-20"></div>
+        
+        {/* Score text */}
+        <div className="absolute w-full text-center bottom-2 text-2xl font-bold text-white z-30">{score}</div>
+      </div>
+      
+      {/* Classification badge */}
+      <div 
+        className="px-4 py-2 rounded-full font-bold text-black"
+        style={{ backgroundColor: color }}
+      >
+        {classification}
+      </div>
+    </div>
+  );
+};
+
+// Factor Card Component
+const FactorCard = ({ factor }: { factor: { name: string; score: number; description: string } }) => {
+  // Color based on score impact (modified from the original to reflect the scoring system)
+  const getColor = () => {
+    // Since factor scores range from -25 to +15, map them to colors differently
+    const score = factor.score;
+    if (score <= -15) return '#FF4136'; // Very negative - Red
+    if (score < 0) return '#FF851B'; // Negative - Orange 
+    if (score === 0) return '#FFDC00'; // Neutral - Yellow
+    if (score <= 10) return '#2ECC40'; // Positive - Light Green
+    return '#01FF70'; // Very positive - Green
+  };
+  
+  // Format the score for display with a + sign for positive scores
+  const formattedScore = factor.score > 0 ? `+${factor.score}` : factor.score;
+  
+  return (
+    <Card className="bg-black/30 border border-white/10 hover:border-[#05d9e8]/40 transition-all">
+      <CardHeader className="pb-2">
+        <CardTitle className="text-lg flex items-center gap-2">
+          <div className="w-3 h-3 rounded-full" style={{ backgroundColor: getColor() }}></div>
+          {factor.name}
+          <span className="ml-auto text-sm font-normal" style={{ color: getColor() }}>
+            {formattedScore} points
+          </span>
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        <p className="text-sm text-[#d1d1e9]">{factor.description}</p>
+      </CardContent>
+    </Card>
+  );
+};
+
 export default function Home() {
+  // State variables
+  const [address, setAddress] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [analysis, setAnalysis] = useState<TrustAnalysis | null>(null);
+  
+  // Function to handle address analysis
+  const analyzeAddress = async () => {
+    // Basic validation
+    if (!address || !address.startsWith('0x')) {
+      setError('Please enter a valid Rootstock address (starting with 0x)');
+      return;
+    }
+    
+    setIsLoading(true);
+    setError(null);
+    
+    try {
+      const response = await fetch(`/api/analyze/${address}`);
+      const data = await response.json();
+      
+      if (!response.ok) {
+        throw new Error(data.message || 'Failed to analyze address');
+      }
+      
+      setAnalysis(data.data);
+    } catch (err: any) {
+      setError(err.message || 'An error occurred while analyzing the address');
+      setAnalysis(null);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   return (
     <div className="min-h-screen text-foreground font-[family-name:var(--font-geist-sans)]">
       {/* Header with improved logo */}
@@ -91,17 +217,28 @@ export default function Home() {
                   type="text"
                   placeholder="Enter Rootstock address (0x...)"
                   className="bg-[#0a0a16]/40 border-[#7b61ff]/30 focus:border-[#7b61ff]/70 focus:ring-[#7b61ff]/30"
+                  value={address}
+                  onChange={(e) => setAddress(e.target.value)}
                 />
-                <Button className="w-full group relative overflow-hidden bg-[#1a1a2e] border-[#ff2a6d]/50 text-white">
+                <Button 
+                  className="w-full group relative overflow-hidden bg-[#1a1a2e] border-[#ff2a6d]/50 text-white"
+                  onClick={analyzeAddress}
+                  disabled={isLoading}
+                >
                   <span className="relative z-10 flex items-center justify-center gap-2">
-                    Analyze 
+                    {isLoading ? 'Analyzing...' : 'Analyze'} 
                     <ChevronRight className="h-4 w-4 group-hover:translate-x-1 transition-transform" />
                   </span>
                   <span className="absolute inset-0 bg-gradient-to-r from-[#ff2a6d] to-[#7b61ff]/80 group-hover:opacity-90 transition-opacity"></span>
                 </Button>
               </div>
-              {/* Placeholder for loading/error messages */}
-              <div className="mt-4 text-sm text-muted-foreground"></div>
+              {/* Loading/error messages */}
+              {error && (
+                <div className="mt-4 text-sm text-red-500 flex items-center gap-2">
+                  <AlertCircle className="h-4 w-4" />
+                  {error}
+                </div>
+              )}
             </CardContent>
           </Card>
 
@@ -130,49 +267,127 @@ export default function Home() {
 
         {/* Right Column: Results Dashboard */}
         <div className="md:col-span-2 space-y-8">
-          {/* Placeholder Area for Results - Initially hidden or showing a prompt */}
-          <Card className="bg-black/30 border border-white/10 shadow-xl backdrop-blur-xl h-full flex items-center justify-center min-h-[450px] p-8 card border-[#05d9e8]/20 shadow-[0_0_30px_-10px_rgba(5,217,232,0.2)]">
-             <div className="text-center space-y-6">
-               {/* Replaced with ShinySearchIcon component */}
-               <ShinySearchIcon />
-               <h3 className="text-2xl font-semibold text-white neon-text-cyan glitch-text" data-text="Ready to Analyze">Ready to Analyze</h3>
-               <p className="text-muted-foreground max-w-md mx-auto text-[#d1d1e9]">
-                 Enter a Rootstock address in the search field to generate a comprehensive trust analysis using AI.
-               </p>
-             </div>
-          </Card>
+          {!analysis ? (
+            // Placeholder Area for Results - Initially or when no analysis
+            <Card className="bg-black/30 border border-white/10 shadow-xl backdrop-blur-xl h-full flex items-center justify-center min-h-[450px] p-8 card border-[#05d9e8]/20 shadow-[0_0_30px_-10px_rgba(5,217,232,0.2)]">
+              <div className="text-center space-y-6">
+                {isLoading ? (
+                  <>
+                    <div className="w-16 h-16 border-4 border-t-[#05d9e8] border-b-[#05d9e8] border-l-transparent border-r-transparent rounded-full animate-spin mx-auto"></div>
+                    <h3 className="text-2xl font-semibold text-white neon-text-cyan">Analyzing Address</h3>
+                    <p className="text-muted-foreground max-w-md mx-auto text-[#d1d1e9]">
+                      We're collecting on-chain data and performing AI analysis. This may take a moment...
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    <ShinySearchIcon />
+                    <h3 className="text-2xl font-semibold text-white neon-text-cyan glitch-text" data-text="Ready to Analyze">Ready to Analyze</h3>
+                    <p className="text-muted-foreground max-w-md mx-auto text-[#d1d1e9]">
+                      Enter a Rootstock address in the search field to generate a comprehensive trust analysis using AI.
+                    </p>
+                  </>
+                )}
+              </div>
+            </Card>
+          ) : (
+            // Analysis Results
+            <div className="space-y-8">
+              {/* Trust Score Dashboard */}
+              <Card className="bg-black/30 border border-white/10 shadow-xl backdrop-blur-xl card border-[#05d9e8]/20">
+                <CardHeader>
+                  <CardTitle className="text-xl text-white neon-text-cyan">Trust Score Dashboard</CardTitle>
+                </CardHeader>
+                <CardContent className="flex flex-col items-center md:flex-row gap-8">
+                  <TrustScoreGauge 
+                    score={analysis.trustScore} 
+                    classification={analysis.classification} 
+                  />
+                  <div className="flex-1">
+                    <h3 className="text-xl font-semibold mb-2 text-white">Analysis Summary</h3>
+                    <p className="text-[#d1d1e9] leading-relaxed">{analysis.summary}</p>
+                    <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-2">
+                      <div className="flex items-center gap-2 text-sm">
+                        <Check className="h-4 w-4 text-green-500" />
+                        <span>Standardized scoring system</span>
+                      </div>
+                      {analysis.riskAreas.length === 0 ? (
+                        <div className="flex items-center gap-2 text-sm">
+                          <Check className="h-4 w-4 text-green-500" />
+                          <span>No risk areas detected</span>
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-2 text-sm">
+                          <AlertTriangle className="h-4 w-4 text-yellow-500" />
+                          <span>{analysis.riskAreas.length} risk areas detected</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
 
-          {/* ---- Results Sections (Placeholders using Card) ---- */}
-          {/* Trust Score Dashboard Placeholder */}
-          {/* <Card className="bg-card/60 border shadow-md">
-               <CardHeader>
-                 <CardTitle className="text-xl">Trust Score Dashboard</CardTitle>
-               </CardHeader>
-               <CardContent>
-                 <div className="text-muted-foreground">[Trust Score Gauge and Classification Badge]</div>
-                 <div className="text-muted-foreground mt-2">[Summary of Analysis]</div>
-               </CardContent>
-             </Card> */}
+              {/* Factor Breakdown */}
+              <Card className="bg-black/30 border border-white/10 shadow-xl backdrop-blur-xl card border-[#05d9e8]/20">
+                <CardHeader>
+                  <CardTitle className="text-xl text-white neon-text-cyan">Trust Factors</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {analysis.factors.map((factor, index) => (
+                      <FactorCard key={index} factor={factor} />
+                    ))}
+                  </div>
+                </CardContent>
+              </Card>
 
-          {/* Factor Breakdown Placeholder */}
-          {/* <Card className="bg-card/60 border shadow-md">
-               <CardHeader>
-                 <CardTitle className="text-xl">Factor Breakdown</CardTitle>
-               </CardHeader>
-               <CardContent>
-                 <div className="text-muted-foreground">[Visual Representation of Scoring Factors]</div>
-               </CardContent>
-             </Card> */}
+              {/* Recommendations & Risk Areas */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {/* Recommendations */}
+                <Card className="bg-black/30 border border-white/10 shadow-xl backdrop-blur-xl card border-[#05d9e8]/20">
+                  <CardHeader>
+                    <CardTitle className="text-lg text-white neon-text-cyan">Recommendations</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <ul className="space-y-2">
+                      {analysis.recommendations.map((rec, index) => (
+                        <li key={index} className="flex items-start gap-2 text-sm text-[#d1d1e9]">
+                          <Check className="h-4 w-4 text-green-500 mt-0.5 shrink-0" />
+                          <span>{rec}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </CardContent>
+                </Card>
 
-          {/* Data Visualization Placeholder */}
-          {/* <Card className="bg-card/60 border shadow-md">
-               <CardHeader>
-                 <CardTitle className="text-xl">Wallet Activity Visualization</CardTitle>
-               </CardHeader>
-               <CardContent>
-                 <div className="text-muted-foreground">[Charts showing activity, interactions, holdings]</div>
-               </CardContent>
-             </Card> */}
+                {/* Risk Areas */}
+                <Card className="bg-black/30 border border-white/10 shadow-xl backdrop-blur-xl card border-[#05d9e8]/20">
+                  <CardHeader>
+                    <CardTitle className="text-lg text-white neon-text-cyan">Risk Areas</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    {analysis.riskAreas.length === 0 ? (
+                      <div className="flex flex-col items-center justify-center py-4 text-center">
+                        <div className="p-2 rounded-full bg-green-500/20 mb-2">
+                          <Check className="h-8 w-8 text-green-500" />
+                        </div>
+                        <p className="text-sm text-[#d1d1e9]">No risk areas detected for this address</p>
+                      </div>
+                    ) : (
+                      <ul className="space-y-2">
+                        {analysis.riskAreas.map((risk, index) => (
+                          <li key={index} className="flex items-start gap-2 text-sm text-[#d1d1e9]">
+                            <AlertTriangle className="h-4 w-4 text-yellow-500 mt-0.5 shrink-0" />
+                            <span>{risk}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </CardContent>
+                </Card>
+              </div>
+            </div>
+          )}
         </div>
       </main>
 

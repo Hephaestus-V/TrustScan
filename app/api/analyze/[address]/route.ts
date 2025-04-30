@@ -6,11 +6,11 @@ import { cacheResult, checkCache } from '@/lib/cache';
 
 export async function GET(
   request: NextRequest,
-  context: { params: { address: string } }
+  { params }: { params: { address: string } }
 ) {
   try {
     // Validate address parameter
-    const address = context.params.address;
+    const address = params.address;
     
     if (!address || typeof address !== 'string') {
       return NextResponse.json(

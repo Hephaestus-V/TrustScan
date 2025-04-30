@@ -1,5 +1,5 @@
 import { createThirdwebClient } from 'thirdweb';
-
+import { fallbackResponse } from '@/utils/fallbackResponse';
 // Interface for wallet data response
 export interface WalletData {
   transactionHistory: any[];
@@ -25,52 +25,63 @@ export async function fetchWalletData(address: string): Promise<WalletData> {
       throw new Error('THIRDWEB_SECRET_KEY is not defined in environment variables');
     }
 
-    console.log(`API call for address: ${address}`);
-    
-    // Call Nebula API with the correct request format based on documentation
-    const response = await fetch("https://nebula-api.thirdweb.com/chat", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-secret-key": secretKey,
-      },
-      body: JSON.stringify({
-        message: `Provide comprehensive data about the wallet ${address} on Rootstock in a structured way. I need DETAILED information about:
-        1. Transaction history (last 50 transactions with dates, amounts, and counterparty addresses)
-        2. Smart contract interactions (which contracts, interaction types, how many times, and any known flagged contracts)
-        3. Token holdings (types, amounts, token classification like stablecoin/governance/NFT)
-        4. Age of address (first transaction date as well as age in days)
-        5. Unique addresses interacted with (exact count)
-        6. Current account balance
-        
-        Format the response as structured data that can be parsed as JSON.`,
-        stream: false,
-        response_format: {
-          type: "json_object"
+    const staticNebulaResponse = fallbackResponse;
+    let rawData: any; // Variable to hold API response or fallback static data
+
+    try {
+      console.log(`Attempting Nebula API call for address: ${address}`);
+      const response = await fetch("https://nebula-api.thirdweb.com/chat", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-secret-key": secretKey,
         },
-        context_filter: {
-          chain_ids: ["30"], // Rootstock mainnet chain ID
-          wallet_address: address
-        }
-      }),
-    });
+        body: JSON.stringify({
+          message: `Provide comprehensive data about the wallet ${address} on Rootstock in a structured way. I need DETAILED information about:
+          1. Transaction history (last 50 transactions with dates, amounts, and counterparty addresses)
+          2. Smart contract interactions (which contracts, interaction types, how many times, and any known flagged contracts)
+          3. Token holdings (types, amounts, token classification like stablecoin/governance/NFT)
+          4. Age of address (first transaction date as well as age in days)
+          5. Unique addresses interacted with (exact count)
+          6. Current account balance
+          
+          Format the response as structured data that can be parsed as JSON.`,
+          stream: false,
+          response_format: {
+            type: "json_object"
+          },
+          context_filter: {
+            chain_ids: ["30"], // Rootstock mainnet chain ID
+            wallet_address: address
+          }
+        }),
+      });
 
-    console.log("Response:", response);
+      console.log("API Response Status:", response.status, response.statusText);
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error(`API error response: ${errorText}`);
-      throw new Error(`Nebula API error: ${response.status} ${response.statusText}`);
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error(`API error response text: ${errorText}`);
+        // Throw an error to trigger the catch block and use fallback data
+        throw new Error(`Nebula API error: ${response.status} ${response.statusText}`);
+      }
+
+      rawData = await response.json();
+      console.log(`Successfully received data from Nebula API. Message length: ${rawData.message?.length || 0}`);
+      // --- END: Nebula API call ---
+      
+    } catch (apiError) {
+      console.warn(`Nebula API call failed for address ${address}. Using static fallback data. Error:`, apiError);
+      // Use static data as fallback
+      rawData = staticNebulaResponse;
+      console.log(`API call for address: ${address} (Using static data due to error)`); 
     }
-
-    const data = await response.json();
-    console.log(`Got response data with message length: ${data.message?.length || 0}`);
     
-    // Process and format the response
-    const formattedData = formatNebulaResponse(data);
-    return formattedData;
+    // Process and format the rawData (either from API or static fallback)
+    const formattedResponse = formatNebulaResponse(rawData);
+    return formattedResponse;
   } catch (error) {
-    console.error('Error fetching wallet data:', error);
+    console.error('Error processing wallet data:', error);
     throw error;
   }
 }
@@ -82,9 +93,10 @@ export async function fetchWalletData(address: string): Promise<WalletData> {
  */
 function formatNebulaResponse(response: any): WalletData {
   try {
-    // Extract the response data - could be directly in response or in the message field
-    let parsedData: any = {};
+    // Extract the response data
+    let parsedData = response;
     
+    // Check if response has a message field that needs to be parsed
     if (response.message) {
       // If message is a string, try to extract JSON data from it
       if (typeof response.message === 'string') {
@@ -93,17 +105,29 @@ function formatNebulaResponse(response: any): WalletData {
           parsedData = JSON.parse(response.message);
         } catch (e) {
           // If direct parsing fails, try to extract JSON from the text
-          const jsonMatch = response.message.match(/```json\s*([\s\S]*?)\s*```/) || 
-                            response.message.match(/```\s*([\s\S]*?)\s*```/) || 
-                            response.message.match(/{[\s\S]*?}/);
-          
-          if (jsonMatch && jsonMatch[0]) {
+          const jsonRegexes = [
+            /```json\s*([\s\S]*?)\s*```/, // Matches ```json ... ```
+            /```\s*([\s\S]*?)\s*```/,     // Matches ``` ... ```
+            /({[\s\S]*})/              // Matches { ... } (Captures the object itself)
+          ];
+          let jsonText: string | null = null;
+
+          for (const regex of jsonRegexes) {
+            const match = response.message.match(regex);
+            // Use captured group 1 if it exists (for ``` regexes), otherwise use group 0 (for {} regex)
+            if (match && (match[1] || match[0])) {
+              jsonText = (match[1] || match[0]).trim();
+              break; // Found a match, stop searching
+            }
+          }
+
+          if (jsonText) {
             try {
               // Try to parse the extracted JSON text
-              const jsonText = jsonMatch[0].replace(/```json\s*|\s*```|```\s*|\s*```/g, '');
               parsedData = JSON.parse(jsonText);
             } catch (jsonError) {
               console.error('Error parsing extracted JSON:', jsonError);
+              console.error('Problematic JSON Text:', jsonText);
               // Fall back to text extraction
               parsedData = extractDataFromText(response.message);
             }
@@ -116,67 +140,62 @@ function formatNebulaResponse(response: any): WalletData {
         // If message is already an object, use it directly
         parsedData = response.message;
       }
-    } else {
-      // If no message field, assume the response itself contains the data
-      parsedData = response;
     }
+    
     console.log(parsedData);
     
-    let addressAge = 'Unknown';
-    let formattedAge = '';
+    // Map the fields from the static response to the expected WalletData interface
     
-    // Try to extract a proper age in days format
-    if (parsedData.addressAge) {
-      addressAge = parsedData.addressAge;
-      
-      // If addressAge contains a date, try to convert it to days
-      if (typeof addressAge === 'string' && addressAge.includes('-')) {
+    // Handle transaction history - map from transaction_history
+    const transactionHistory = Array.isArray(parsedData.transaction_history) 
+      ? parsedData.transaction_history 
+      : [];
+    
+    // Handle contract interactions - map from smart_contract_interactions.contracts
+    const contractInteractions = parsedData.smart_contract_interactions && Array.isArray(parsedData.smart_contract_interactions.contracts)
+      ? parsedData.smart_contract_interactions.contracts
+      : [];
+    
+    // Handle token holdings - map from token_holdings
+    const tokenHoldings = Array.isArray(parsedData.token_holdings)
+      ? parsedData.token_holdings
+      : [];
+    
+    // Map address age from age_of_address, as a string in the format "X days"
+    let addressAge = 'Unknown';
+    if (parsedData.age_of_address) {
+      if (parsedData.age_of_address.age_in_days) {
+        addressAge = `${parsedData.age_of_address.age_in_days} days`;
+      } else if (parsedData.age_of_address.first_transaction_observed) {
+        // If we have a first transaction date but no age in days, calculate it
         try {
-          const creationDate = new Date(addressAge);
+          const creationDate = new Date(parsedData.age_of_address.first_transaction_observed);
           const now = new Date();
           const diffTime = Math.abs(now.getTime() - creationDate.getTime());
           const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-          formattedAge = `${diffDays} days`;
+          addressAge = `${diffDays} days`;
         } catch (e) {
-          formattedAge = addressAge;
+          addressAge = parsedData.age_of_address.first_transaction_observed || 'Unknown';
         }
       }
     }
     
-    // Use the formatted age string if we were able to calculate it
-    if (formattedAge) {
-      addressAge = formattedAge;
-    }
+    // Map unique interactions from unique_addresses_interacted_with
+    const uniqueInteractions = parsedData.unique_addresses_interacted_with || 0;
     
-    // Handle transaction history
-    const transactionHistory = Array.isArray(parsedData.transactionHistory) 
-      ? parsedData.transactionHistory 
-      : [];
-    
-    // Handle contract interactions
-    const contractInteractions = Array.isArray(parsedData.contractInteractions)
-      ? parsedData.contractInteractions
-      : [];
-    
-    // Handle token holdings
-    const tokenHoldings = Array.isArray(parsedData.tokenHoldings)
-      ? parsedData.tokenHoldings
-      : [];
-    
-    // Get unique interactions count
-    let uniqueInteractions = parsedData.uniqueInteractions || 0;
-    
-    // If unique interactions is missing but we have transaction history,
-    // we can try to calculate it by extracting unique addresses
-    if (!uniqueInteractions && transactionHistory.length > 0) {
-      const uniqueAddresses = new Set<string>();
-      transactionHistory.forEach((tx: any) => {
-        if (tx.from) uniqueAddresses.add(tx.from);
-        if (tx.to) uniqueAddresses.add(tx.to);
-      });
-      // Remove the address being analyzed
-      uniqueAddresses.delete(parsedData.address);
-      uniqueInteractions = uniqueAddresses.size;
+    // Map account balance
+    let accountBalance = '0';
+    if (parsedData.account_balance) {
+      if (typeof parsedData.account_balance === 'string') {
+        accountBalance = parsedData.account_balance;
+      } else if (typeof parsedData.account_balance === 'object') {
+        // If it's an object with cryptocurrency keys, format as "amount symbol"
+        const balanceEntries = Object.entries(parsedData.account_balance);
+        if (balanceEntries.length > 0) {
+          const [symbol, amount] = balanceEntries[0];
+          accountBalance = `${amount} ${symbol}`;
+        }
+      }
     }
     
     return {
@@ -185,7 +204,7 @@ function formatNebulaResponse(response: any): WalletData {
       tokenHoldings,
       addressAge,
       uniqueInteractions,
-      accountBalance: parsedData.accountBalance || '0',
+      accountBalance,
     };
   } catch (error) {
     console.error('Error formatting Nebula response:', error);

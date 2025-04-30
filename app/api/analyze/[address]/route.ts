@@ -27,8 +27,6 @@ export async function GET(
     try {
       // Fetch on-chain data using thirdweb Nebula AI API
       console.log(`Fetching on-chain data for address: ${address}`);
-      // Fetch on-chain data using thirdweb Nebula AI API
-      console.log(`Fetching on-chain data for address: ${address}`);
       const walletData = await fetchWalletData(address);
       
       // Send to LLM for analysis
